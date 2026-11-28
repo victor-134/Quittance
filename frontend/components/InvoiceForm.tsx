@@ -438,6 +438,9 @@ export default function InvoiceForm({ onSuccess, userWallet }: InvoiceFormProps)
         assetCode: assetCode,
         assetIssuer: chosenAsset.issuer,
         expiresInDays: 7,
+        ...(expiryMs !== undefined && expiryValue
+          ? { expiresAt: new Date(expiryMs).toISOString() }
+          : {}),
         sellerPublicKey: enteredMuxedAddress || userWallet,
         sellerName: sellerName.trim() || undefined,
         description: description || undefined,

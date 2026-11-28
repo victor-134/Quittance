@@ -322,7 +322,7 @@ export default function PaymentPage() {
     paymentInfo?.stellarPaymentUri ??
     buildStellarPaymentUri(
       invoice.sellerMuxedAddress ?? invoice.sellerPublicKey,
-      invoice.amount.toString(),
+      payableAmount,
       invoice.assetCode,
       invoice.memo,
       invoice.assetIssuer
@@ -380,12 +380,17 @@ export default function PaymentPage() {
                   </div>
                   <div>
                     <AmountDisplay
-                      amount={invoice.amount}
+                      amount={payableAmount}
                       assetCode={invoice.assetCode}
                       decimals={7}
                       size="xl"
                       showAssetKind
                     />
+                    {Number(receivedAmount) > 0 && (
+                      <p className="mt-2 text-sm text-gray-600">
+                        {invoice.amount} {invoice.assetCode} total · {receivedAmount} {invoice.assetCode} already paid
+                      </p>
+                    )}
                     {issuerDomain && (
                       <p className="mt-2 text-sm font-medium text-gray-600">
                         {issuerDomain}
@@ -579,10 +584,10 @@ export default function PaymentPage() {
                   <p className="text-xs text-gray-600 mb-1">Amount</p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-xs bg-white p-2 rounded border font-semibold">
-                      {invoice.amount}
+                      {payableAmount}
                     </code>
                     <button
-                      onClick={() => copyInfo(invoice.amount.toString(), 'Amount')}
+                      onClick={() => copyInfo(payableAmount, 'Amount')}
                       className="p-2 hover:bg-gray-200 rounded transition"
                       aria-label="Copy amount"
                     >
@@ -850,7 +855,7 @@ export default function PaymentPage() {
 
                   <PaymentButton
                     destination={invoice.sellerPublicKey}
-                    amount={remainingAmount}
+                    amount={payableAmount}
                     memo={invoice.memo}
                     assetCode={invoice.assetCode}
                     assetIssuer={invoice.assetIssuer}

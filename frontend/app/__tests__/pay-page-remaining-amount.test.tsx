@@ -81,15 +81,15 @@ describe('PaymentPage remaining amount', () => {
     mockInvoice(partialInvoice);
     render(<PaymentPage />);
 
-    expect(await screen.findByText('7.5000000')).toBeInTheDocument();
-    expect(screen.queryByText('12.5000000')).not.toBeInTheDocument();
+    expect((await screen.findAllByText('7.5')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('12.5')).not.toBeInTheDocument();
   });
 
   it('keeps the invoice total and the paid part visible for context', async () => {
     mockInvoice(partialInvoice);
     render(<PaymentPage />);
 
-    await screen.findByText('7.5000000');
+    await screen.findAllByText('7.5');
     expect(screen.getByText(/12\.5 XLM total/i)).toBeInTheDocument();
     expect(screen.getByText(/5 XLM already paid/i)).toBeInTheDocument();
   });
@@ -105,14 +105,14 @@ describe('PaymentPage remaining amount', () => {
     mockInvoice({ ...partialInvoice, receivedAmount: '20', remainingAmount: '-7.5' });
     render(<PaymentPage />);
 
-    expect(await screen.findByText('0.0000000')).toBeInTheDocument();
+    expect((await screen.findAllByText('0')).length).toBeGreaterThan(0);
   });
 
   it('shows the full amount when nothing matching has been paid', async () => {
     mockInvoice(unpaidInvoice);
     render(<PaymentPage />);
 
-    expect(await screen.findByText('12.5000000')).toBeInTheDocument();
+    expect((await screen.findAllByText('12.5')).length).toBeGreaterThan(0);
     expect(screen.queryByText(/total/i)).not.toBeInTheDocument();
     expect(screen.getByTestId('wallet-payment')).toHaveTextContent('12.5');
   });
