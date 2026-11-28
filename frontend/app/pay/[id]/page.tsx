@@ -6,12 +6,14 @@ import Link from 'next/link';
 import { invoiceApi } from '@/lib/api';
 import PaymentButton from '@/components/PaymentButton';
 import PaymentQrCodes from '@/components/PaymentQrCodes';
+import PaymentMemo from '@/components/PaymentMemo';
 import { buildStellarPaymentUri } from '@/lib/stellar-payment-uri';
 import WalletConnect from '@/components/WalletConnect';
 import UserProfile from '@/components/UserProfile';
 import PaymentReceipt from '@/components/PaymentReceipt';
 import PaymentStatus from '@/components/PaymentStatus';
 import AssetLogo from '@/components/AssetLogo';
+import AmountDisplay from '@/components/AmountDisplay';
 import { formatAmount, formatDate, copyToClipboard } from '@/lib/utils';
 import { useCountdown } from '@/lib/useCountdown';
 import { Copy, ExternalLink, Loader2, Check, FileText, Mail, RefreshCw } from 'lucide-react';
@@ -69,8 +71,18 @@ export default function PaymentPage() {
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const timeRemaining = useCountdown(invoice?.status === 'PENDING' ? invoice.expiresAt : null);
+  // Only payments that matched this invoice are recorded on it, and each one
+  // is identified by its full 64-character Stellar transaction hash.
+  const matchedPayments: any[] = invoice?.payments ?? [];
   const receivedAmount = invoice?.receivedAmount ?? '0';
   const remainingAmount = invoice?.remainingAmount ?? invoice?.amount?.toString();
+  // What the payer still owes while the invoice is open. A fully unpaid
+  // invoice has received nothing, so this is the full amount; a remainder can
+  // never be negative, even if the API ever reported inconsistent totals.
+  const payableAmount =
+    invoice?.status === 'PENDING' && Number(remainingAmount) < 0
+      ? '0'
+      : remainingAmount;
 
   useEffect(() => {
     void loadInvoice();
@@ -310,11 +322,12 @@ export default function PaymentPage() {
     paymentInfo?.stellarPaymentUri ??
     buildStellarPaymentUri(
       invoice.sellerMuxedAddress ?? invoice.sellerPublicKey,
-      invoice.amount.toString(),
+      payableAmount,
       invoice.assetCode,
       invoice.memo,
       invoice.assetIssuer
     );
+  const sellerWalletConnected = userWallet === invoice.sellerPublicKey;
 
   const horizonUrl =
     process.env.NEXT_PUBLIC_STELLAR_NETWORK === 'TESTNET'
@@ -366,17 +379,23 @@ export default function PaymentPage() {
                     <AssetLogo code={invoice.assetCode} size={50} showName={false} priority={true} />
                   </div>
                   <div>
-                    <p className="text-4xl sm:text-6xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent break-all">
-                      {formatAmount(invoice.amount, 7)}
-                    </p>
-                    <p className="text-xl font-bold text-cyan-600 mt-2">
-                      {invoice.assetCode}
-                      {issuerDomain && (
-                        <span className="ml-2 text-sm font-medium text-gray-600">
-                          {issuerDomain}
-                        </span>
-                      )}
-                    </p>
+                    <AmountDisplay
+                      amount={payableAmount}
+                      assetCode={invoice.assetCode}
+                      decimals={7}
+                      size="xl"
+                      showAssetKind
+                    />
+                    {Number(receivedAmount) > 0 && (
+                      <p className="mt-2 text-sm text-gray-600">
+                        {invoice.amount} {invoice.assetCode} total · {receivedAmount} {invoice.assetCode} already paid
+                      </p>
+                    )}
+                    {issuerDomain && (
+                      <p className="mt-2 text-sm font-medium text-gray-600">
+                        {issuerDomain}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -509,7 +528,7 @@ export default function PaymentPage() {
               )}
             </div>
 
-            {invoice.status === 'PAID' && (
+            {invoice.status === 'PAID' && sellerWalletConnected && (
               <div className="border-t pt-5 flex gap-2">
                 <button
                   onClick={handleDownloadPDF}
@@ -559,30 +578,16 @@ export default function PaymentPage() {
                   </div>
                 </div>
 
-                <div>
-                  <p className="text-xs text-gray-600 mb-1">Memo (Required)</p>
-                  <div className="flex items-center gap-2">
-                    <code className="flex-1 text-xs bg-white p-2 rounded border font-semibold">
-                      {invoice.memo}
-                    </code>
-                    <button
-                      onClick={() => copyInfo(invoice.memo, 'Memo')}
-                      className="p-2 hover:bg-gray-200 rounded transition"
-                      aria-label="Copy memo"
-                    >
-                      <Copy className="w-4 h-4" aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
+                <PaymentMemo memo={invoice.memo} />
 
                 <div>
                   <p className="text-xs text-gray-600 mb-1">Amount</p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-xs bg-white p-2 rounded border font-semibold">
-                      {invoice.amount}
+                      {payableAmount}
                     </code>
                     <button
-                      onClick={() => copyInfo(invoice.amount.toString(), 'Amount')}
+                      onClick={() => copyInfo(payableAmount, 'Amount')}
                       className="p-2 hover:bg-gray-200 rounded transition"
                       aria-label="Copy amount"
                     >
@@ -690,7 +695,10 @@ export default function PaymentPage() {
 
           <div className="space-y-6">
             {invoice.status === 'PAID' && (
-              <PaymentReceipt invoice={invoice} />
+              <PaymentReceipt
+                invoice={invoice}
+                showProofActions={sellerWalletConnected}
+              />
             )}
 
             {invoice.status === 'EXPIRED' && (
@@ -706,12 +714,13 @@ export default function PaymentPage() {
             )}
 
             {invoice.status === 'CANCELLED' && (
-              <div className="card text-center py-8">
+              <div className="card text-center py-8" role="status" data-testid="voided-invoice-notice">
                 <h3 className="text-2xl font-bold text-gray-800 mb-2">
                   Invoice Voided
                 </h3>
                 <p className="text-gray-600">
-                  This invoice is no longer accepting payments.
+                  The seller voided this invoice, so it cannot be paid. Do not send a
+                  payment for it. Contact the seller if you still owe them.
                 </p>
               </div>
             )}
@@ -733,6 +742,32 @@ export default function PaymentPage() {
                     </dl>
                   </div>
                 )}
+                <div className="card">
+                  <h3 className="text-lg font-semibold mb-3">Matched payments</h3>
+                  {matchedPayments.length > 0 ? (
+                    <>
+                      <p className="text-sm text-gray-600 mb-3">
+                        These transactions already count towards this invoice.
+                      </p>
+                      <ul
+                        className="space-y-2"
+                        aria-label="Matched payment transaction hashes"
+                      >
+                        {matchedPayments.map((payment: any) => (
+                          <li key={payment.txHash}>
+                            <code className="block text-xs font-mono bg-gray-50 border border-gray-200 rounded p-2 break-all">
+                              {payment.txHash}
+                            </code>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-600">
+                      No payments have matched this invoice yet.
+                    </p>
+                  )}
+                </div>
                 <div className="card">
                   <h3 className="text-lg font-semibold text-center mb-4">Scan QR Code</h3>
                   {paymentInfoLoading ? (
@@ -820,12 +855,13 @@ export default function PaymentPage() {
 
                   <PaymentButton
                     destination={invoice.sellerPublicKey}
-                    amount={remainingAmount}
+                    amount={payableAmount}
                     memo={invoice.memo}
                     assetCode={invoice.assetCode}
                     assetIssuer={invoice.assetIssuer}
                     invoiceId={invoice.id}
                     expiresAt={invoice.expiresAt}
+                    disabled={verifying}
                     onSuccess={handlePaymentSuccess}
                     onError={handlePaymentError}
                   />

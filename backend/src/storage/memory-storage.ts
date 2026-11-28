@@ -1,5 +1,47 @@
 // In-memory storage - Database yerine MVP için
 import { v4 as uuidv4 } from 'uuid';
+import { normalizeAssetCode } from '../utils/asset-helpers';
+
+export type InvoiceStatus =
+  | 'PENDING'
+  | 'PAID'
+  | 'REFUNDED'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'UNCOLLECTIBLE';
+
+export type StatusEventStatus =
+  | 'CREATED'
+  | 'EXTENDED'
+  | 'VOIDED'
+  | 'PARTIALLY_PAID'
+  | 'PAID'
+  | 'REFUNDED'
+  | 'EXPIRED'
+  | 'UNCOLLECTIBLE';
+
+export interface StatusEvent {
+  status: StatusEventStatus;
+  at: Date;
+  txHash?: string;
+}
+
+function statusEventFor(status: InvoiceStatus): StatusEventStatus {
+  switch (status) {
+    case 'PAID':
+      return 'PAID';
+    case 'REFUNDED':
+      return 'REFUNDED';
+    case 'EXPIRED':
+      return 'EXPIRED';
+    case 'CANCELLED':
+      return 'VOIDED';
+    case 'UNCOLLECTIBLE':
+      return 'UNCOLLECTIBLE';
+    default:
+      return 'CREATED';
+  }
+}
 
 export interface Invoice {
   id: string;
@@ -14,7 +56,7 @@ export interface Invoice {
   description?: string;
   customerName?: string;
   customerEmail?: string;
-  status: 'PENDING' | 'PAID' | 'REFUNDED' | 'EXPIRED' | 'CANCELLED' | 'UNCOLLECTIBLE';
+  status: InvoiceStatus;
   paymentTxHash?: string;
   anchoringTxHash?: string;
   paymentLedger?: number;
@@ -34,41 +76,6 @@ export interface Invoice {
   receivedAmount: string;
 }
 
-export type StatusEventStatus =
-  | 'CREATED'
-  | 'PARTIALLY_PAID'
-  | 'PAID'
-  | 'EXTENDED'
-  | 'VOIDED'
-  | 'REFUNDED'
-  | 'EXPIRED'
-  | 'UNCOLLECTIBLE';
-
-export interface StatusEvent {
-  status: StatusEventStatus;
-  at: Date;
-  txHash?: string;
-}
-
-function statusEventFor(
-  status: Invoice['status'],
-): StatusEventStatus {
-  switch (status) {
-    case 'PENDING':
-      return 'CREATED';
-    case 'PAID':
-      return 'PAID';
-    case 'REFUNDED':
-      return 'REFUNDED';
-    case 'EXPIRED':
-      return 'EXPIRED';
-    case 'CANCELLED':
-      return 'VOIDED';
-    case 'UNCOLLECTIBLE':
-      return 'UNCOLLECTIBLE';
-  }
-}
-
 class MemoryStorage {
   private invoices: Map<string, Invoice> = new Map();
   private invoicesByMemo: Map<string, string> = new Map(); // memo -> invoice id
@@ -84,7 +91,7 @@ class MemoryStorage {
       sellerMuxedAddress: data.sellerMuxedAddress,
       sellerName: data.sellerName,
       amount: data.amount!,
-      assetCode: data.assetCode || 'XLM',
+      assetCode: normalizeAssetCode(data.assetCode),
       assetIssuer: data.assetIssuer,
       memo: data.memo!,
       description: data.description,
@@ -236,15 +243,15 @@ class MemoryStorage {
 
   recordPayment(
     id: string,
-    payment: { txHash: string; amount: string; payerPublicKey: string; ledger: number; paidAt: Date },
+    payment: Invoice['payments'][number],
     receivedAmount: string,
     paid: boolean,
   ): Invoice | undefined {
-    const invoice = this.invoices.get(id);
-    if (!invoice) return undefined;
-    const payments = [...invoice.payments, payment];
+    const existing = this.invoices.get(id);
+    if (!existing) return undefined;
+
     const updated = this.updateInvoice(id, {
-      payments,
+      payments: [...existing.payments, payment],
       receivedAmount,
       ...(paid
         ? {
@@ -256,7 +263,7 @@ class MemoryStorage {
           }
         : {}),
     });
-    this.invoicesByTxHash.set(payment.txHash, id);
+    if (updated) this.invoicesByTxHash.set(payment.txHash, id);
     return updated;
   }
 
@@ -347,4 +354,3 @@ class MemoryStorage {
 }
 
 export default new MemoryStorage();
-

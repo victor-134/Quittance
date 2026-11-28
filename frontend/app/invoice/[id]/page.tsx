@@ -13,6 +13,7 @@ import PaymentReceipt from '@/components/PaymentReceipt';
 import StatusHistory, { type StatusHistoryRow } from '@/components/StatusHistory';
 import AssetLogo from '@/components/AssetLogo';
 import { formatAmount, formatDate, copyToClipboard } from '@/lib/utils';
+import { formatUtc } from '@/lib/formatUtc';
 import { openInvoicePDF } from '@/lib/export';
 import { submitAnchorTransaction } from '@/lib/anchor';
 import { useCountdown } from '@/lib/useCountdown';
@@ -29,12 +30,12 @@ export default function InvoiceDetailPage() {
   const [loading, setLoading] = useState(true);
   const [voiding, setVoiding] = useState(false);
   const [userWallet, setUserWallet] = useState<string | null>(null);
-  const [refundTxHash, setRefundTxHash] = useState('');
-  const [refunding, setRefunding] = useState(false);
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [copyCustomerEmail, setCopyCustomerEmail] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [anchoring, setAnchoring] = useState(false);
+  const [refundTxHash, setRefundTxHash] = useState('');
+  const [refunding, setRefunding] = useState(false);
   const timeRemaining = useCountdown(invoice?.status === 'PENDING' ? invoice.expiresAt : null);
   const isSeller =
     Boolean(userWallet) &&
@@ -98,68 +99,6 @@ export default function InvoiceDetailPage() {
     toast.success('Opening payment proof');
   };
 
-  const handleVoidInvoice = async () => {
-    if (!userWallet || !isSeller) return;
-
-    setVoiding(true);
-    try {
-      const result = await invoiceApi.cancel(id, userWallet);
-      setInvoice(result.data);
-      toast.success('Invoice voided');
-    } catch (error: any) {
-      toast.error(error.response?.data?.error ?? 'Could not void invoice');
-    } finally {
-      setVoiding(false);
-    }
-  };
-
-  const handleDuplicate = async () => {
-    if (!userWallet || !isSeller) return;
-
-    setDuplicating(true);
-    try {
-      const result = await invoiceApi.duplicate(id, {
-        sellerPublicKey: userWallet,
-        copyCustomerEmail,
-      });
-      setDuplicateOpen(false);
-      toast.success('Invoice duplicated');
-      router.push(`/invoice/${result.data.invoice.id}`);
-    } catch (error: any) {
-      toast.error(error.response?.data?.error ?? 'Could not duplicate invoice');
-    } finally {
-      setDuplicating(false);
-    }
-  };
-
-  const handleAnchorProof = async () => {
-    if (!userWallet || !isSeller) return;
-
-    setAnchoring(true);
-    try {
-      const digestResult = await invoiceApi.getProofDigest(id, userWallet);
-      const digest = digestResult.data.digest;
-      const preparation = await invoiceApi.prepareAnchorProof(id, digest, userWallet);
-      const contractId = preparation.data.contractId;
-      if (!contractId) {
-        throw new Error('Receipt anchoring contract is not configured');
-      }
-
-      const txHash = await submitAnchorTransaction(contractId, id, digest);
-      const result = await invoiceApi.anchorProof(id, {
-        digest,
-        txHash,
-        sellerPublicKey: userWallet,
-      });
-      setInvoice(result.data);
-      toast.success('Proof anchored on chain');
-    } catch (error: any) {
-      toast.error(error.response?.data?.error ?? error.message ?? 'Could not anchor proof');
-    } finally {
-      setAnchoring(false);
-    }
-  };
-
   const handleRefund = async () => {
     if (!userWallet || userWallet !== invoice.sellerPublicKey || !refundTxHash.trim()) return;
     setRefunding(true);
@@ -175,6 +114,73 @@ export default function InvoiceDetailPage() {
       toast.error(error.response?.data?.error ?? 'Refund could not be verified');
     } finally {
       setRefunding(false);
+    }
+  };
+
+  const handleVoidInvoice = async () => {
+    if (!userWallet || !isSeller || invoice.status !== 'PENDING' || voiding) return;
+    setVoiding(true);
+    try {
+      const result = await invoiceApi.cancel(id, userWallet);
+      setInvoice(result.data);
+      toast.success('Invoice voided');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error ?? 'Could not void invoice');
+    } finally {
+      setVoiding(false);
+    }
+  };
+
+  const handleDuplicate = async () => {
+    if (!userWallet || !isSeller || duplicating) return;
+    setDuplicating(true);
+    try {
+      const result = await invoiceApi.duplicate(id, {
+        sellerPublicKey: userWallet,
+        copyCustomerEmail,
+      });
+      const duplicatedInvoice = result.data?.invoice;
+      if (!duplicatedInvoice?.id) {
+        throw new Error('The duplicated invoice response is invalid');
+      }
+      setDuplicateOpen(false);
+      toast.success('Invoice duplicated');
+      router.push(`/invoice/${duplicatedInvoice.id}`);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error ?? error.message ?? 'Could not duplicate invoice');
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
+  const handleAnchorProof = async () => {
+    if (!userWallet || !isSeller || invoice.status !== 'PAID' || anchoring) return;
+    setAnchoring(true);
+    try {
+      const digestResult = await invoiceApi.getProofDigest(id, userWallet);
+      const digest = digestResult.data?.digest;
+      if (typeof digest !== 'string' || !digest) {
+        throw new Error('Could not compute the invoice proof digest');
+      }
+
+      const preparedResult = await invoiceApi.prepareAnchorProof(id, digest, userWallet);
+      const contractId = preparedResult.data?.contractId;
+      if (typeof contractId !== 'string' || !contractId) {
+        throw new Error('Receipt anchoring contract is not configured');
+      }
+
+      const txHash = await submitAnchorTransaction(contractId, id, digest);
+      const result = await invoiceApi.anchorProof(id, {
+        digest,
+        txHash,
+        sellerPublicKey: userWallet,
+      });
+      setInvoice(result.data);
+      toast.success('Proof anchored on chain');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error ?? error.message ?? 'Could not anchor proof');
+    } finally {
+      setAnchoring(false);
     }
   };
 
@@ -430,14 +436,14 @@ export default function InvoiceDetailPage() {
                 </div>
 
                 <div className="border-b pb-4">
-                  <p className="text-sm text-gray-600 mb-1">Created</p>
-                  <p className="text-gray-900">{formatDate(invoice.createdAt)}</p>
+                  <p className="text-sm text-gray-600 mb-1">Created (UTC)</p>
+                  <p className="text-gray-900" data-testid="invoice-created-utc">{formatUtc(invoice.createdAt)}</p>
                 </div>
 
                 {invoice.paidAt && (
                   <div className="border-b pb-4">
-                    <p className="text-sm text-gray-600 mb-1">Paid At</p>
-                    <p className="text-gray-900">{formatDate(invoice.paidAt)}</p>
+                    <p className="text-sm text-gray-600 mb-1">Paid (UTC)</p>
+                    <p className="text-gray-900" data-testid="invoice-paid-utc">{formatUtc(invoice.paidAt)}</p>
                   </div>
                 )}
 
@@ -490,12 +496,6 @@ export default function InvoiceDetailPage() {
                   </div>
                 )}
 
-                {invoice.paidAt && (
-                  <div className="border-b pb-4">
-                    <p className="text-sm text-gray-600 mb-1">Paid At</p>
-                    <p className="text-gray-900">{formatDate(invoice.paidAt)}</p>
-                  </div>
-                )}
               </div>
             </div>
 

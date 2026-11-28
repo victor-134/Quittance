@@ -1,6 +1,7 @@
 'use client';
 
-import { formatAmount, formatDate } from '@/lib/utils';
+import { formatAmount } from '@/lib/utils';
+import { formatUtc } from '@/lib/formatUtc';
 import { explorerTxUrl } from '@/lib/explorerUrl';
 import { Check, Download, ExternalLink, FileText, Mail } from 'lucide-react';
 import AssetLogo from './AssetLogo';
@@ -10,9 +11,13 @@ import CopyButton from './CopyButton';
 
 interface PaymentReceiptProps {
   invoice: any;
+  showProofActions?: boolean;
 }
 
-export default function PaymentReceipt({ invoice }: PaymentReceiptProps) {
+export default function PaymentReceipt({
+  invoice,
+  showProofActions = true,
+}: PaymentReceiptProps) {
   const paymentHash = invoice.paymentTxHash;
   if (invoice.status !== 'PAID' || typeof paymentHash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(paymentHash)) {
     return null;
@@ -39,7 +44,7 @@ export default function PaymentReceipt({ invoice }: PaymentReceiptProps) {
 
 Invoice ID: ${invoice.id}
 Status: ${invoice.status}
-Payment Date: ${formatDate(invoice.paidAt)}
+Payment Date (UTC): ${formatUtc(invoice.paidAt)}
 
 ───────────────────────────────────────
 PAYMENT DETAILS
@@ -122,8 +127,8 @@ Stellar Blockchain Payment System
           </div>
 
           <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-xs text-gray-600 mb-1">Payment Date</p>
-            <p className="text-sm text-gray-900">{formatDate(invoice.paidAt)}</p>
+            <p className="text-xs text-gray-600 mb-1">Payment Date (UTC)</p>
+            <p className="text-sm text-gray-900">{formatUtc(invoice.paidAt)}</p>
           </div>
         </div>
 
@@ -187,7 +192,7 @@ Stellar Blockchain Payment System
       </div>
 
       <div className="border-t pt-6 space-y-3 print:hidden">
-        {invoice.status === 'PAID' && (
+        {showProofActions && invoice.status === 'PAID' && (
           <button
             onClick={handleDownloadPDF}
             className="btn btn-primary w-full flex items-center justify-center gap-2"
@@ -197,7 +202,7 @@ Stellar Blockchain Payment System
           </button>
         )}
 
-        {invoice.status === 'PAID' && invoice.customerEmail && (
+        {showProofActions && invoice.status === 'PAID' && invoice.customerEmail && (
           <button
             onClick={handleEmailProof}
             className="btn btn-secondary w-full flex items-center justify-center gap-2"

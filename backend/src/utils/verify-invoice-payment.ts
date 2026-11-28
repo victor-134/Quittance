@@ -13,9 +13,9 @@
  * without spinning up Express, Stellar Horizon, or the in-memory store.
  */
 
-import { amountToStroops } from './amount-compare';
+import { amountToStroops, compareDecimals, subtractDecimalAmounts } from './amount-compare';
 import { memosMatch } from './memo-normalize';
-import { NATIVE_ASSET_CODE } from './asset-helpers';
+import { NATIVE_ASSET_CODE, normalizeAssetCode } from './asset-helpers';
 import { VerifyErrorCode } from './verify-errors';
 import { extractBaseAddress, MuxedAccount, StrKey } from '@stellar/stellar-sdk';
 
@@ -213,11 +213,14 @@ export function paymentAssetMatchesInvoice(input: {
   invoiceAssetIssuer?: string | null;
   paymentIsNative?: boolean;
 }): boolean {
+  const paymentAsset = normalizeAssetCode(input.paymentAsset);
+  const invoiceAssetCode = normalizeAssetCode(input.invoiceAssetCode);
+
   // An `XLM` invoice that records an issuer is a *credit* asset that happens
   // to share the native code, not native lumens; only an issuer-less XLM
   // invoice is native.
   const invoiceIsNative =
-    input.invoiceAssetCode === NATIVE_ASSET_CODE &&
+    invoiceAssetCode === NATIVE_ASSET_CODE &&
     normalizeIssuer(input.invoiceAssetIssuer) === undefined;
 
   if (invoiceIsNative) {
@@ -226,14 +229,14 @@ export function paymentAssetMatchesInvoice(input: {
     if (input.paymentIsNative === false) {
       return false;
     }
-    return input.paymentAsset === NATIVE_ASSET_CODE;
+    return paymentAsset === NATIVE_ASSET_CODE;
   }
 
   if (input.paymentIsNative === true) {
     return false;
   }
 
-  if (input.paymentAsset !== input.invoiceAssetCode) {
+  if (paymentAsset !== invoiceAssetCode) {
     return false;
   }
 
@@ -305,6 +308,30 @@ export function checkTransactionTimeBounds(input: {
   }
 
   return { ok: true };
+}
+
+/**
+ * The amount still unpaid on an invoice: its total minus the payments already
+ * verified against it.
+ *
+ * Only verified payments reach `receivedAmount`; a transfer with the wrong memo,
+ * destination, amount or asset never passes this matcher and is therefore never
+ * subtracted. The result is clamped at zero, so inconsistent stored totals can
+ * never surface a negative remainder.
+ */
+export function remainingInvoiceAmount(
+  invoiceAmount: number | string,
+  receivedAmount: number | string | null | undefined,
+): string {
+  const total = String(invoiceAmount ?? '0').trim() || '0';
+  const received = String(receivedAmount ?? '0').trim() || '0';
+  const settled = compareDecimals(received, '0') > 0 ? received : '0';
+
+  if (compareDecimals(settled, total) >= 0) {
+    return '0';
+  }
+
+  return subtractDecimalAmounts(total, settled);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { subtractDecimalAmounts } from './amount-compare';
+import { remainingInvoiceAmount } from './verify-invoice-payment';
 
 import type { StatusEvent, StatusEventStatus } from '../storage/memory-storage';
 
@@ -31,7 +31,13 @@ export interface InvoiceDTO {
   description?: string;
   customerName?: string;
   customerEmail?: string;
-  status: 'PENDING' | 'PAID' | 'REFUNDED' | 'EXPIRED' | 'CANCELLED' | 'UNCOLLECTIBLE';
+  status:
+    | 'PENDING'
+    | 'PAID'
+    | 'REFUNDED'
+    | 'EXPIRED'
+    | 'CANCELLED'
+    | 'UNCOLLECTIBLE';
   paymentTxHash?: string;
   payerPublicKey?: string;
   ledger?: number;
@@ -55,7 +61,7 @@ export interface InvoiceDTO {
 export interface ProofDigestFields {
   network: string;
   invoiceId: string;
-  amount: number;
+  amount: number | string;
   assetCode: string;
   /** Empty string for native XLM — never the word "null". */
   assetIssuer: string;
@@ -126,7 +132,13 @@ export function toInvoiceDTO(
     lineItems?: Array<{ label: string; quantity: number; unitPrice: number }>;
     customerName?: string;
     customerEmail?: string;
-    status: 'PENDING' | 'PAID' | 'REFUNDED' | 'EXPIRED' | 'CANCELLED' | 'UNCOLLECTIBLE';
+    status:
+      | 'PENDING'
+      | 'PAID'
+      | 'REFUNDED'
+      | 'EXPIRED'
+      | 'CANCELLED'
+      | 'UNCOLLECTIBLE';
     paymentTxHash?: string;
     payerPublicKey?: string;
     ledger?: number;
@@ -179,7 +191,7 @@ export function toInvoiceDTO(
       paidAt: payment.paidAt.toISOString(),
     })),
     receivedAmount: invoice.receivedAmount ?? '0',
-    remainingAmount: subtractDecimalAmounts(String(invoice.amount), invoice.receivedAmount ?? '0'),
+    remainingAmount: remainingInvoiceAmount(invoice.amount, invoice.receivedAmount),
   };
 
   // The label belongs to this invoice; it must never become payment identity.

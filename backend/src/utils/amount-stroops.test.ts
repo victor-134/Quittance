@@ -73,7 +73,7 @@ describe('verify uses integer stroops', () => {
     expect(verifyInvoicePayment(input)).toEqual({ ok: true });
   });
 
-  it('accepts a positive partial amount without rounding away stroops', () => {
+  it('accepts a valid partial payment one stroop short', () => {
     expect(verifyInvoicePayment({ ...input, paymentAmount: '1.4999999' })).toEqual({
       ok: true,
     });

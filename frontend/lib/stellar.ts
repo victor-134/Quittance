@@ -24,6 +24,11 @@ export const NETWORK_PASSPHRASE =
 
 export const server = new StellarSdk.Horizon.Server(HORIZON_URL);
 
+const FRIENDBOT_URL = 'https://friendbot.stellar.org';
+
+/** XLM a single-operation payment needs to cover the base network fee. */
+export const MIN_XLM_FOR_FEE = Number(StellarSdk.BASE_FEE) / 10_000_000;
+
 export type WalletNetwork = 'TESTNET' | 'PUBLIC' | 'UNKNOWN';
 
 export const getConfiguredNetwork = (): 'TESTNET' | 'PUBLIC' =>
@@ -35,21 +40,24 @@ export const getConfiguredNetwork = (): 'TESTNET' | 'PUBLIC' =>
 
 export const isTestnetNetwork = (): boolean => getConfiguredNetwork() === 'TESTNET';
 
-const MINIMUM_XLM_FEE_BALANCE = 0.01;
-
-export const hasEnoughXlmForFee = (balance: string | undefined): boolean => {
-  const amount = Number(balance);
-  return Number.isFinite(amount) && amount >= MINIMUM_XLM_FEE_BALANCE;
+export const hasEnoughXlmForFee = (
+  balance: string | number | null | undefined,
+): boolean => {
+  const amount = typeof balance === 'number' ? balance : Number(balance);
+  return Number.isFinite(amount) && amount >= MIN_XLM_FOR_FEE;
 };
 
 export const requestFriendbotFunding = async (publicKey: string): Promise<void> => {
   if (!isTestnetNetwork()) {
-    throw new Error('Friendbot is available only on Stellar testnet');
+    throw new Error('Friendbot funding is only available on testnet');
+  }
+  if (!isValidPublicKey(publicKey)) {
+    throw new Error('Invalid Stellar public key');
   }
 
-  const response = await fetch(
-    `${HORIZON_URL}/friendbot?addr=${encodeURIComponent(publicKey)}`,
-  );
+  const url = new URL(FRIENDBOT_URL);
+  url.searchParams.set('addr', publicKey);
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Friendbot request failed with status ${response.status}`);
   }
@@ -239,6 +247,8 @@ export const buildPaymentTransaction = (
 export interface SendPaymentOptions {
   /** Account that pays the network fee by wrapping the payment in a fee bump. */
   feeSource?: string;
+  /** Invoice expiry in unix seconds; bounds the payment transaction. */
+  maxTime?: number;
 }
 
 /**
@@ -261,6 +271,10 @@ export const buildFeeBumpPaymentTransaction = (
 /**
  * Send payment with memo. When `options.feeSource` is set, the payer signs the
  * inner payment and the fee source signs the wrapping fee bump.
+ *
+ * The sixth argument accepts either the invoice expiry in unix seconds (the
+ * original calling convention) or an options object carrying both the expiry
+ * and an optional fee source.
  */
 export const sendPayment = async (
   destination: string,
@@ -268,10 +282,17 @@ export const sendPayment = async (
   memo: string,
   assetCode: string = 'XLM',
   assetIssuer?: string,
-  maxTime?: number,
-  options: SendPaymentOptions = {},
+  maxTimeOrOptions?: number | SendPaymentOptions,
+  options?: SendPaymentOptions
 ): Promise<string> => {
+  const paymentOptions: SendPaymentOptions =
+    typeof maxTimeOrOptions === 'number'
+      ? { ...options, maxTime: maxTimeOrOptions }
+      : maxTimeOrOptions ?? options ?? {};
+  const maxTime = paymentOptions.maxTime;
   try {
+    const feeSourceOption = paymentOptions;
+
     // Check wallet connection
     const connected = await checkWalletConnection();
     if (!connected) {
@@ -323,7 +344,7 @@ export const sendPayment = async (
 
     // The fee source pays the fee but is not the payer: sign the inner
     // payment with the payer first, then wrap and sign with the fee source.
-    const feeSource = options.feeSource?.trim();
+    const feeSource = feeSourceOption?.feeSource?.trim();
     const signedTxXdr = await signTransaction(transaction.toXDR(), {
       networkPassphrase: NETWORK_PASSPHRASE,
       ...(feeSource ? { accountToSign: userPublicKey } : {}),
@@ -455,6 +476,9 @@ export default {
   loadAccount,
   getAccountBalance,
   checkAssetReadiness,
+  isTestnetNetwork,
+  hasEnoughXlmForFee,
+  requestFriendbotFunding,
   buildPaymentTransaction,
   buildFeeBumpPaymentTransaction,
   sendPayment,
@@ -464,4 +488,3 @@ export default {
   formatStellarAmount,
   isValidPublicKey,
 };
-

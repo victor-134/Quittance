@@ -12,6 +12,7 @@ import type { InvoiceStore } from '../storage/storage-factory';
 import type { StatusEvent, StatusEventStatus } from '../storage/memory-storage';
 import memoryStorage from '../storage/memory-storage';
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '../utils/parse-pagination';
+import { normalizeAssetCode, NATIVE_ASSET_CODE } from '../utils/asset-helpers';
 import { extractBaseAddress, StrKey } from '@stellar/stellar-sdk';
 import { AnchorError, AnchorErrorCode, canonicalDigestMatches } from '../utils/canonical-proof';
 import { queueInvoicePaidWebhook } from './webhook.service';
@@ -79,23 +80,29 @@ class InvoiceMemoryService {
       memo = await this.generateFreeMemo();
     }
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + (input.expiresInDays || 7));
+    const expiresAt = input.expiresAt
+      ? new Date(input.expiresAt)
+      : new Date();
+    if (!input.expiresAt) {
+      expiresAt.setDate(expiresAt.getDate() + (input.expiresInDays || 7));
+    }
 
     const storage = await getStorage();
     const sellerMuxedAddress = StrKey.isValidMed25519PublicKey(input.sellerPublicKey)
       ? input.sellerPublicKey
       : undefined;
+    const assetCode = normalizeAssetCode(input.assetCode);
     const invoice = await storage.createInvoice({
       sellerPublicKey: sellerMuxedAddress
-        ? extractBaseAddress(input.sellerPublicKey)
+        ? extractBaseAddress(sellerMuxedAddress)
         : input.sellerPublicKey,
       sellerMuxedAddress,
       sellerName: input.sellerName,
       amount: input.amount,
       lineItems: input.lineItems,
-      assetCode: input.assetCode || 'XLM',
-      assetIssuer: input.assetIssuer,
+      assetCode,
+      // Native XLM has no issuer; never persist one even if a caller sends it.
+      assetIssuer: assetCode === NATIVE_ASSET_CODE ? undefined : input.assetIssuer,
       memo,
       description: input.description,
       customerName: input.customerName,
@@ -204,12 +211,13 @@ class InvoiceMemoryService {
     paid: boolean,
   ): Promise<any> {
     const storage = await getStorage();
-    if (!storage.recordPayment) {
-      throw new Error('Partial payments are not supported by this storage backend');
-    }
+    const existing = await storage.getInvoiceById(invoiceId);
+    if (!existing) throw new Error('Invoice not found');
     const invoice = await storage.recordPayment(invoiceId, payment, receivedAmount, paid);
     if (!invoice) throw new Error('Invoice not found');
-    if (paid) queueInvoicePaidWebhook(invoice);
+    if (paid && existing.status !== 'PAID') {
+      queueInvoicePaidWebhook(invoice);
+    }
     return invoice;
   }
 
@@ -552,4 +560,3 @@ class InvoiceMemoryService {
 }
 
 export default new InvoiceMemoryService();
-

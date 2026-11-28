@@ -27,7 +27,6 @@ import healthDetailRouter from './routes/health-detail';
 import {
   toInvoiceDTO as mapInvoiceDTO,
   toStatusHistoryDTO,
-  type ToInvoiceDTOOptions,
 } from './utils/invoice-dto';
 import {
   addDecimalAmounts,
@@ -36,6 +35,7 @@ import {
   isDecimalEqual,
   subtractDecimalAmounts,
 } from './utils/amount-compare';
+import { memosMatch } from './utils/memo-normalize';
 import { VerifyErrorCode, VerifyErrorMessages } from './utils/verify-errors';
 import {
   assertInvoiceSettleable,
@@ -50,12 +50,9 @@ import {
   isSelfPayment,
   paymentDestinationMatchesInvoice,
   paymentAssetMatchesInvoice,
+  remainingInvoiceAmount,
 } from './utils/verify-invoice-payment';
 import { MAX_PAGE_LIMIT, parsePaginationQuery } from './utils/parse-pagination';
-import { memosMatch } from './utils/memo-normalize';
-import { isSmtpConfigured, sendEmail, generateInvoiceEmail } from './utils/smtp';
-import { STELLAR_NETWORK } from './config/stellar';
-import { createInvoiceBackup } from './utils/invoice-backup';
 import {
   AnchorError,
   AnchorErrorCode,
@@ -64,6 +61,9 @@ import {
   getAnchorContractId,
 } from './utils/canonical-proof';
 import { verifyAnchorTransaction } from './utils/anchor-transaction';
+import { createInvoiceBackup } from './utils/invoice-backup';
+import { isSmtpConfigured, sendEmail, generateInvoiceEmail } from './utils/smtp';
+import { STELLAR_NETWORK } from './config/stellar';
 import {
   IDEMPOTENCY_KEY_HEADER,
   createOnce,
@@ -210,17 +210,36 @@ const backupDate = z.string().refine((value) => !Number.isNaN(Date.parse(value))
 const backupInvoice = z.object({
   id: z.string().min(1),
   sellerPublicKey: stellarPublicKeySchema,
+  sellerName: z.string().optional(),
+  sellerMuxedAddress: z.string().optional(),
   amount: z.number().positive().finite(),
+  lineItems: z.array(z.object({
+    label: z.string(),
+    quantity: z.number(),
+    unitPrice: z.number(),
+  })).optional(),
   assetCode: z.string().min(1),
   assetIssuer: z.string().optional(),
   memo: memoByteLengthSchema.min(1),
   description: z.string().optional(),
   customerName: z.string().optional(),
   customerEmail: z.string().optional(),
-  status: z.enum(['PENDING', 'PAID', 'EXPIRED', 'CANCELLED']),
+  status: z.enum(['PENDING', 'PAID', 'REFUNDED', 'EXPIRED', 'CANCELLED', 'UNCOLLECTIBLE']),
   paymentTxHash: z.string().min(1).optional(),
   payerPublicKey: z.string().optional(),
   ledger: z.number().int().positive().optional(),
+  refundTxHash: z.string().min(1).optional(),
+  refundedAt: backupDate.optional(),
+  refundLedger: z.number().int().positive().optional(),
+  anchoringTxHash: z.string().min(1).optional(),
+  payments: z.array(z.object({
+    txHash: z.string().min(1),
+    amount: z.string(),
+    payerPublicKey: z.string(),
+    ledger: z.number().int().positive(),
+    paidAt: backupDate,
+  })).optional(),
+  receivedAmount: z.string().optional(),
   createdAt: backupDate,
   paidAt: backupDate.optional(),
   expiresAt: backupDate,
@@ -275,11 +294,15 @@ app.post('/api/invoices/import', (req: Request, res: Response) => {
       ...row,
       createdAt: new Date(row.createdAt),
       paidAt: row.paidAt ? new Date(row.paidAt) : undefined,
+      refundedAt: row.refundedAt ? new Date(row.refundedAt) : undefined,
       expiresAt,
       originalExpiresAt: row.originalExpiresAt ? new Date(row.originalExpiresAt) : expiresAt,
       expiryExtended: row.expiryExtended ?? false,
-      payments: [],
-      receivedAmount: '0',
+      payments: row.payments?.map((payment) => ({
+        ...payment,
+        paidAt: new Date(payment.paidAt),
+      })) ?? [],
+      receivedAmount: row.receivedAmount ?? '0',
     });
   }
 
@@ -628,27 +651,11 @@ app.post('/api/invoices/:id/partial-payment', async (req: Request, res: Response
         error: VerifyErrorMessages[VerifyErrorCode.TX_HASH_REQUIRED],
       });
     }
-    const verifyHashValidation = verifyTxHashSchema.safeParse(txHash);
-    if (!verifyHashValidation.success) {
+    if (typeof txHash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(txHash)) {
       return res.status(400).json({
         success: false,
         code: VerifyErrorCode.INVALID_TX_HASH,
         error: VerifyErrorMessages[VerifyErrorCode.INVALID_TX_HASH],
-      });
-    }
-    const hashValidation = verifyTxHashSchema.safeParse(txHash);
-    if (!hashValidation.success) {
-      return res.status(400).json({
-        success: false,
-        code: VerifyErrorCode.INVALID_TX_HASH,
-        error: VerifyErrorMessages[VerifyErrorCode.INVALID_TX_HASH],
-      });
-    }
-    if (!/^[0-9a-fA-F]{64}$/.test(txHash)) {
-      return res.status(400).json({
-        success: false,
-        code: 'INVALID_TX_HASH',
-        error: 'Invalid Stellar transaction hash format',
       });
     }
 
@@ -1247,6 +1254,14 @@ app.post('/api/invoices/:id/verify', invoiceVerifyRateLimit(), async (req: Reque
       });
     }
 
+    if (typeof txHash !== 'string' || !verifyTxHashSchema.safeParse(txHash).success) {
+      return res.status(400).json({
+        success: false,
+        code: VerifyErrorCode.INVALID_TX_HASH,
+        error: VerifyErrorMessages[VerifyErrorCode.INVALID_TX_HASH],
+      });
+    }
+
     // A hash that already settled another invoice cannot settle this one, no
     // matter that the memo and amount match. Checked after the already-paid
     // guard so retrying this invoice is not reported as a reuse, and before
@@ -1396,7 +1411,7 @@ app.post('/api/invoices/:id/verify', invoiceVerifyRateLimit(), async (req: Reque
     }
 
     const receivedAmount = String(invoice.receivedAmount ?? '0');
-    const remainingAmount = subtractDecimalAmounts(String(invoice.amount), receivedAmount);
+    const remainingAmount = remainingInvoiceAmount(invoice.amount, receivedAmount);
     if (
       compareDecimals(paymentOp.amount, '0') <= 0 ||
       compareDecimals(paymentOp.amount, remainingAmount) > 0
@@ -1737,4 +1752,3 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 export default app;
-

@@ -65,17 +65,16 @@ function seedInvoice() {
 }
 
 function matchingHorizonTx(memo: string) {
-  const createdAt = new Date();
-  const validBefore = new Date(createdAt.getTime() + 5 * 60 * 1000);
+  const nowSeconds = Math.floor(Date.now() / 1000);
   return {
     transaction: {
+      successful: true,
       memo,
       memo_type: 'text',
       source_account: PAYER,
       ledger_sequence: 1,
-      successful: true,
-      created_at: createdAt.toISOString(),
-      valid_before: validBefore.toISOString(),
+      created_at: new Date().toISOString(),
+      preconditions: { timebounds: { max_time: String(nowSeconds + 3600) } },
     },
     operations: [
       {

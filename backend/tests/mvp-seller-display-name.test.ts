@@ -50,13 +50,15 @@ describe('invoice seller labels', () => {
     const invoice = created.body.data.invoice;
     getTransaction.mockResolvedValue({
       transaction: {
+        successful: true,
         memo: invoice.memo,
         memo_type: 'text',
         ledger_sequence: 123,
         source_account: PAYER,
-        successful: true,
         created_at: new Date().toISOString(),
-        valid_before: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        preconditions: {
+          timebounds: { max_time: String(Math.floor(Date.now() / 1000) + 3600) },
+        },
       },
       operations: [{ type: 'payment', from: PAYER, to: PAYER, amount: '1.5', asset_type: 'native' }],
     });
@@ -65,13 +67,15 @@ describe('invoice seller labels', () => {
     expect(wrong.body.code).toBe('DESTINATION_MISMATCH');
     getTransaction.mockResolvedValue({
       transaction: {
+        successful: true,
         memo: invoice.memo,
         memo_type: 'text',
         ledger_sequence: 123,
         source_account: PAYER,
-        successful: true,
         created_at: new Date().toISOString(),
-        valid_before: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        preconditions: {
+          timebounds: { max_time: String(Math.floor(Date.now() / 1000) + 3600) },
+        },
       },
       operations: [{ type: 'payment', from: PAYER, to: SELLER, amount: '1.5', asset_type: 'native' }],
     });

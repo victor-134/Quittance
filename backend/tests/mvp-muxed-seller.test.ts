@@ -30,15 +30,16 @@ async function call(method: 'GET' | 'POST', path: string, body?: unknown) {
 }
 
 function horizonPayment(memo: string, destination: Record<string, unknown>) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
   return {
     transaction: {
+      successful: true,
       memo,
       memo_type: 'text',
       ledger_sequence: 12345,
       source_account: PAYER,
-      successful: true,
       created_at: new Date().toISOString(),
-      valid_before: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      preconditions: { timebounds: { max_time: String(nowSeconds + 3600) } },
     },
     operations: [{
       type: 'payment',

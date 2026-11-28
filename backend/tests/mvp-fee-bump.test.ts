@@ -70,6 +70,7 @@ function feeBumpReceipt(options: {
     feeSource = FEE_SOURCE,
     nested = false,
   } = options;
+  const nowSeconds = Math.floor(Date.now() / 1000);
 
   const innerTransaction: any = {
     hash: 'f'.repeat(64),
@@ -87,6 +88,7 @@ function feeBumpReceipt(options: {
 
   return {
     transaction: {
+      successful: true,
       memo,
       memo_type: 'text',
       source_account: payer,
@@ -94,7 +96,7 @@ function feeBumpReceipt(options: {
       ledger_sequence: 1,
       successful: true,
       created_at: new Date().toISOString(),
-      valid_before: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      preconditions: { timebounds: { max_time: String(nowSeconds + 3600) } },
       inner_transaction: innerTransaction,
     },
     operations,
